@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: upstream-backup
+  group: automatic-upstream-backup
   cancel-in-progress: false
 
 jobs:
@@ -23,59 +23,16 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Synchronize with original
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Keep scheduled workflow active
         shell: bash
         run: |
           set -euo pipefail
 
-          REPO_NAME="${GITHUB_REPOSITORY#*/}"
-
-          case "$REPO_NAME" in
-            rea)
-              UPSTREAM="morluto/rea"
-              ;;
-            jadx-headless-mcp)
-              UPSTREAM="1013503897/jadx-headless-mcp"
-              ;;
-            binwalk)
-              UPSTREAM="ReFirmLabs/binwalk"
-              ;;
-            unblob)
-              UPSTREAM="onekey-sec/unblob"
-              ;;
-            ghidra-nativeaot)
-              UPSTREAM="Washi1337/ghidra-nativeaot"
-              ;;
-            wakaru)
-              UPSTREAM="pionxzh/wakaru"
-              ;;
-            *)
-              echo "Unknown repository: $REPO_NAME"
-              exit 1
-              ;;
-          esac
-
-          git config user.name "github-actions[bot]"
-          git config user.email \
-            "41898282+github-actions[bot]@users.noreply.github.com"
-
-          if BRANCH="$(gh api "repos/$UPSTREAM" \
-            --jq '.default_branch' 2>/dev/null)"; then
-
-            git fetch \
-              "https://github.com/$UPSTREAM.git" \
-              "$BRANCH"
-
-            git merge --no-edit FETCH_HEAD
-          else
-            echo "::warning::Original unavailable: $UPSTREAM"
-            echo "Existing backup is preserved."
-          fi
-
-          # Weekly heartbeat prevents long inactivity.
           if [ "$(date -u +%u)" = "1" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email \
+              "41898282+github-actions[bot]@users.noreply.github.com"
+
             mkdir -p .archive-metadata
 
             date -u '+%Y-%m-%dT%H:%M:%SZ' \
@@ -85,7 +42,20 @@ jobs:
 
             if ! git diff --cached --quiet; then
               git commit -m "chore: archive heartbeat"
+              git push origin "HEAD:${GITHUB_REF_NAME}"
             fi
           fi
 
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+      - name: Sync fork with upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gh api \
+            --method POST \
+            "repos/${GITHUB_REPOSITORY}/merge-upstream" \
+            -f branch="${GITHUB_REF_NAME}"
+
+          echo "Upstream synchronization completed."
